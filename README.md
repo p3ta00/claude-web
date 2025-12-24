@@ -16,11 +16,12 @@ A mobile-friendly web interface for Claude Code CLI. Uses your existing Claude s
 - **No API Costs** - Routes through Claude Code CLI, uses your Pro/Max subscription
 - **Mobile-Friendly** - Clean, responsive UI that works great on phones
 - **Full System Access** - Execute commands, read/write files, make web requests
-- **Chat History** - Persistent conversations with rename/delete support
+- **Chat History** - Persistent conversations with rename/delete/pin support
 - **Image Support** - Upload multiple images or paste from clipboard (Ctrl+V)
 - **Real-time Streaming** - See responses as they're generated
-- **Tool Visualization** - Watch tool calls execute in real-time
+- **Tool Activity Bar** - Watch Claude's tool calls in real-time (Read, Edit, Bash, Grep, etc.)
 - **Syntax Highlighting** - Beautiful code blocks with copy button
+- **Message Queue** - Queue messages while Claude is responding
 
 ## Requirements
 
@@ -75,9 +76,16 @@ Instead of calling the Anthropic API directly (which requires separate billing),
 - **New Chat** - Click "+ New" or just start typing
 - **Send Message** - Type and press Enter or click the send button
 - **Attach Images** - Click the paperclip icon or paste with Ctrl+V
+- **Tool Activity** - Watch the activity bar to see what Claude is doing in real-time
 - **Rename Chat** - Hover over a chat and click the pencil icon
+- **Pin Chat** - Hover over a chat and click the pin icon
 - **Delete Chat** - Hover over a chat and click the trash icon
 - **Mobile** - Tap the hamburger menu to access chat history
+
+## Screenshots
+
+### Tool Activity Bar
+When Claude uses tools (reading files, running commands, etc.), a compact activity bar appears showing what's happening. Click to expand and see the full tool history.
 
 ## Security Note
 

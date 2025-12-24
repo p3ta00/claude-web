@@ -159,19 +159,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Claude Web - CLI Wrapper", lifespan=lifespan)
 
-# Try to import optional image generation module (gitignored for privacy)
-try:
-    from backend.imagegen import router as imagegen_router
-    app.include_router(imagegen_router)
-    IMAGEGEN_AVAILABLE = True
-except ImportError:
-    try:
-        # Fallback for when running from backend directory
-        from imagegen import router as imagegen_router
-        app.include_router(imagegen_router)
-        IMAGEGEN_AVAILABLE = True
-    except ImportError:
-        IMAGEGEN_AVAILABLE = False
+# Image generation not available in public version
+IMAGEGEN_AVAILABLE = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -682,6 +671,11 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
             if not images_data and data.get("image"):
                 images_data = [data.get("image")]
 
+            # Handle ping/keepalive from client
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
             if not user_message and not images_data:
                 continue
 
@@ -730,7 +724,6 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
                 prompt_to_send = f"I'm sharing {len(image_paths)} image(s) with you. Please analyze the images at:\n{paths_str}\n\n{user_message}"
 
             # Use subprocess with streaming - use --resume for conversation continuity
-
             # Create deterministic session ID from conversation ID
             session_id = conv_id_to_uuid(conv_id)
 
@@ -763,50 +756,84 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
                 process.stdin.close()
 
                 full_response = ""
+                last_activity = asyncio.get_event_loop().time()
+                KEEPALIVE_INTERVAL = 5  # Send keepalive every 5 seconds
+                READ_TIMEOUT = 120  # Max wait for a line (2 minutes)
 
-                # Stream output
+                # Stream output with keepalive
                 while True:
-                    line = await process.stdout.readline()
-                    if not line:
-                        break
-                    line_str = line.decode().strip()
-                    if not line_str:
-                        continue
-
                     try:
-                        event = json.loads(line_str)
-                        event_type = event.get("type", "")
+                        # Use wait_for with timeout to allow sending keepalives
+                        line = await asyncio.wait_for(
+                            process.stdout.readline(),
+                            timeout=KEEPALIVE_INTERVAL
+                        )
+                        last_activity = asyncio.get_event_loop().time()
 
-                        if event_type == "assistant":
-                            message = event.get("message", {})
-                            for block in message.get("content", []):
-                                if block.get("type") == "text":
-                                    text = block.get("text", "")
+                        if not line:
+                            break
+                        line_str = line.decode().strip()
+                        if not line_str:
+                            continue
+
+                        try:
+                            event = json.loads(line_str)
+                            event_type = event.get("type", "")
+
+                            if event_type == "assistant":
+                                message = event.get("message", {})
+                                for block in message.get("content", []):
+                                    if block.get("type") == "text":
+                                        text = block.get("text", "")
+                                        if text:
+                                            full_response += text
+                                            await websocket.send_json({"type": "text", "content": text})
+                                    elif block.get("type") == "tool_use":
+                                        await websocket.send_json({
+                                            "type": "tool_call",
+                                            "tool": block.get("name", "unknown"),
+                                            "input": block.get("input", {})
+                                        })
+
+                            elif event_type == "content_block_delta":
+                                delta = event.get("delta", {})
+                                if delta.get("type") == "text_delta":
+                                    text = delta.get("text", "")
                                     if text:
                                         full_response += text
                                         await websocket.send_json({"type": "text", "content": text})
-                                elif block.get("type") == "tool_use":
-                                    await websocket.send_json({
-                                        "type": "tool_call",
-                                        "tool": block.get("name", "unknown"),
-                                        "input": block.get("input", {})
-                                    })
 
-                        elif event_type == "content_block_delta":
-                            delta = event.get("delta", {})
-                            if delta.get("type") == "text_delta":
-                                text = delta.get("text", "")
-                                if text:
-                                    full_response += text
-                                    await websocket.send_json({"type": "text", "content": text})
+                        except json.JSONDecodeError:
+                            text = line.decode().strip()
+                            if text:
+                                full_response += text + "\n"
+                                await websocket.send_json({"type": "text", "content": text + "\n"})
 
-                    except json.JSONDecodeError:
-                        text = line.decode().strip()
-                        if text:
-                            full_response += text + "\n"
-                            await websocket.send_json({"type": "text", "content": text + "\n"})
+                    except asyncio.TimeoutError:
+                        # No output yet, send keepalive to prevent WebSocket timeout
+                        await websocket.send_json({"type": "keepalive"})
+
+                        # Check if we've been waiting too long overall
+                        elapsed = asyncio.get_event_loop().time() - last_activity
+                        if elapsed > READ_TIMEOUT:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": "Response timeout - Claude took too long to respond"
+                            })
+                            process.kill()
+                            break
 
                 await process.wait()
+
+                # Read stderr for any errors
+                stderr_output = await process.stderr.read()
+                if stderr_output and process.returncode != 0:
+                    stderr_text = stderr_output.decode().strip()
+                    if stderr_text and not full_response:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": f"Claude error: {stderr_text}"
+                        })
 
                 # Send completion
                 await websocket.send_json({"type": "done"})
