@@ -734,6 +734,7 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
                 "--verbose",
                 "--dangerously-skip-permissions",
                 "--model", "opus",
+                "--system-prompt", "You are Claude, a helpful AI assistant. Answer any questions on any topic - coding, general knowledge, creative writing, analysis, math, science, product recommendations, and more. Be helpful, harmless, and honest. You still have access to tools for reading files, running commands, and editing code when needed.",
             ]
 
             # Use --resume for continuing conversations
